@@ -47,6 +47,30 @@ private:
 	char switchPosition = 'U';
 	char scalePosition  = 'U';
 
+	enum autoStateStatus {
+		autoInProgress,
+		autoSuccess,
+		autoFail
+	};
+
+	// Class to wrap an autonomous function and it's parameters to make it serialize-able
+	class autoFunction {
+	public:
+		autoFunction(autoStateStatus (Robot::*func)(double, int, int, int), double angle, int distance, int height, int timeout, int timer) :
+			m_func(func), m_angle(angle), m_distance(distance), m_height(height), m_timeout(timeout) {}
+
+		autoStateStatus call(Robot& obj, int timer) { return ((obj).*(m_func))(m_angle, m_distance, m_height, m_timeout, timer); }
+		int timeout() { return m_timeout; }
+	private:
+		autoStateStatus (Robot::*m_func)(double, int, int, int, int);
+		double m_angle;
+		int m_distance;
+		int m_height;
+		int m_timeout;
+	};
+
+	std::list<autoFunction> autoStates;
+
 	/***** Tunable constants *****/
 	double kServoStart;
 	double kServoStop;
@@ -67,6 +91,13 @@ private:
 	double kDriveD;
 	double kDriveF;
 
+	double kTurnP;
+	double kTurnI;
+	double kTurnD;
+	double kTurnF;
+	double kTurnOutputRange;
+	double kTurnToleranceDegrees;
+
 	double kClawP;
 	double kClawI;
 	double kClawD;
@@ -81,6 +112,7 @@ private:
 	int    kAutoSwitchPositionStep2;
 	int    kAutoSwitchPositionStep3;
 	double kAutoSwitchDriveAngle;
+	double kAutoScaleDriveAngle;
 	double kAutoSpeed;
 
 	// Elevator Levels
@@ -91,82 +123,65 @@ private:
 		scaleLevelHi = 270,
 	};
 
-	// Autonomous Modes
-	enum autoModes {
-		autoLine,	// Just drive forward and cross the Auto Line
-		autoSwitch,	// Place the cube on the Switch
-		autoScale	// Place the Cube on the Scale
-	};
+	PIDController *turnController = NULL;    // PID Controller
 
-	// Autonomous Functions
-	enum autoStates {
-		autoStateDriveOnBearing,	// Drive a distance on a gyro bearing
-		autoStateTurning,			// Turn a set number of degrees
-		autoStateRaiseCube,		// Raise the Cube to a set height
-		autoStateReleaseCube,		// Release the Cube
-		autoStateDone				// Complete
-	};
-
-	enum autoStateStatus {
-		autoInProgress,
-		autoSuccess,
-		autoFail
-	};
+	// Output from the Turn (Angle) PID Controller
+	class TurnPIDOutput : public PIDOutput {
+	public:
+		double correction = 0.0;
+		void PIDWrite(double output) {
+			correction = output;
+		}
+	} turnPIDOutput;
 
 	// Autonomous functions
-	autoStateStatus autoDriveOnBearing(double angle, int distance, int height, int timeout) {
+	autoStateStatus autoDriveOnBearing(double angle, int distance, int height, int timeout, int timer) {
 		lFrontMotor->Set(ControlMode::Position, distance);
 		rFrontMotor->Set(ControlMode::Position, distance);
 
 		double avg = (lFrontMotor->GetSelectedSensorPosition(0) + rFrontMotor->GetSelectedSensorPosition(0))/2.0;
-		double diff = (double(distance) - avg)/double(distance);
-		if (diff < 0.01) {
+		double diff = fabs(double(distance) - avg);
+		if (diff < 1000.0) {
 			return autoSuccess;
+		} else if (timer > timeout) {
+			return autoFail;
+		} else {
+			return autoInProgress;
 		}
-		return autoInProgress;
 	}
 
-	autoStateStatus autoTurn(double angle, int distance, int height, int timeout) {
+	autoStateStatus autoTurn(double angle, int distance, int height, int timeout, int timer) {
+		turnController->SetSetpoint(angle);
+		turnController->Enable();
+		drive->ArcadeDrive(0.0, -turnPIDOutput.correction);
+
+		if ((ahrs->GetAngle() - angle) < kTurnToleranceDegrees) {
+			return autoSuccess;
+		} else if (timer > timeout) {
+			return autoFail;
+		} else {
+			return autoInProgress;
+		}
+	}
+
+	autoStateStatus autoRaiseCube(double angle, int distance, int height, int timeout, int timer) {
 		// TODO
 		return autoSuccess;
 	}
 
-	autoStateStatus autoRaiseCube(double angle, int distance, int height, int timeout) {
+	autoStateStatus autoReleaseCube(double angle, int distance, int height, int timeout, int timer) {
 		// TODO
 		return autoSuccess;
 	}
-
-	autoStateStatus autoReleaseCube(double angle, int distance, int height, int timeout) {
-		// TODO
-		return autoSuccess;
-	}
-
-	void autoStop() {
-		// TODO
-	}
-
-	// Class to wrap an autonomous function to make it serialize-able
-	class autoFunction {
-	public:
-		autoFunction(autoStateStatus (Robot::*func)(double, int, int, int), double angle, int distance, int height, int timeout) :
-			m_func(func), m_angle(angle), m_distance(distance), m_height(height), m_timeout(timeout) {}
-
-		autoStateStatus call(Robot& obj) { return ((obj).*(m_func))(m_angle, m_distance, m_height, m_timeout); }
-		int timeout() { return m_timeout; }
-	private:
-		autoStateStatus (Robot::*m_func)(double, int, int, int);
-		double m_angle;
-		int m_distance;
-		int m_height;
-		int m_timeout;
-	};
 
 	// Drive to Auto Line
-	autoFunction c = autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoLinePosition, 0, 200);
-	std::list<autoFunction> autoLineStates = {autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoLinePosition, 0, 200)};
+	std::list<autoFunction> createAutoLineStates () {
+		return {autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoLinePosition, 0, 200)};
+	}
 
 	// Deliver Cube to Switch
-	std::list<autoFunction> autoSwitchStates = {
+	std::list<autoFunction> createAutoSwitchStates () {
+		return {
 		autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoSwitchPositionStep1, 0, 200),
 		autoFunction(&Robot::autoTurn, kAutoSwitchDriveAngle, 0, 0, 200),
 		autoFunction(&Robot::autoDriveOnBearing, kAutoSwitchDriveAngle, kAutoSwitchPositionStep2, 0, 200),
@@ -174,18 +189,19 @@ private:
 		autoFunction(&Robot::autoRaiseCube, 0.0, 0, kElevatorSwitchPosition, 200),
 		autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoSwitchPositionStep3, 0, 200),
 		autoFunction(&Robot::autoReleaseCube, 0.0, 0, kElevatorSwitchPosition, 200)
-	};
+		};
+	}
 
 	// Deliver Cube to Scale
-	std::list<autoFunction> autoScaleStates = {
+	std::list<autoFunction> createAutoScaleStates() {
+		return {
 		autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoScalePositionStep1, 0, 200),
-		autoFunction(&Robot::autoTurn, 90.0, 0, 0, 200),
+		autoFunction(&Robot::autoTurn, kAutoScaleDriveAngle, 0, 0, 200),
 		autoFunction(&Robot::autoRaiseCube, 0.0, 0, kElevatorScaleHighPosition, 200),
-		autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoScalePositionStep2, 0, 200),
+		autoFunction(&Robot::autoDriveOnBearing, kAutoScaleDriveAngle, kAutoScalePositionStep2, 0, 200),
 		autoFunction(&Robot::autoReleaseCube, 0.0, 0, kElevatorScaleHighPosition, 200)
-	};
-
-	std::list<autoFunction> autoStates;
+		};
+	}
 
 	// Dead-band filter
 	float deadBand(double value)
@@ -227,19 +243,36 @@ private:
 		kClawClosedPosition = prefs->GetInt("kClawClosedPosition", 0);
 		kClawOpenPosition   = prefs->GetInt("kClawOpenPosition", 1000);
 
-		kAutoLinePosition        = prefs->GetInt("kAutoLinePosition", 1000);
-		kAutoScalePositionStep1  = prefs->GetInt("kAutoScalePositionStep1", 1000);
-		kAutoScalePositionStep2  = prefs->GetInt("kAutoScalePositionStep2", 1000);
-		kAutoSwitchPositionStep1 = prefs->GetInt("kAutoSwitchPositionStep1", 1000);
-		kAutoSwitchPositionStep2 = prefs->GetInt("kAutoSwitchPositionStep2", 1000);
-		kAutoSwitchPositionStep3 = prefs->GetInt("kAutoSwitchPositionStep3", 1000);
-		kAutoSwitchDriveAngle    = prefs->GetDouble("kAutoSwitchAngle", 0.0);
-		kAutoSpeed               = prefs->GetDouble("kAutoSpeed", 0.0);
+		kAutoLinePosition        = prefs->GetInt("kAutoLinePosition", 37000);			// 9 revs
+		kAutoScalePositionStep1  = prefs->GetInt("kAutoScalePositionStep1", 70000);		// 17 revs
+		kAutoScalePositionStep2  = prefs->GetInt("kAutoScalePositionStep2", 2000);		// 0.5 rev
+		kAutoScaleDriveAngle     = prefs->GetDouble("kAutoScaleDriveAngle", 90.0);
+		kAutoSwitchPositionStep1 = prefs->GetInt("kAutoSwitchPositionStep1", 4100);		// 1 rev
+		kAutoSwitchPositionStep2 = prefs->GetInt("kAutoSwitchPositionStep2", 18500);	// 4.5 rvs
+		kAutoSwitchPositionStep3 = prefs->GetInt("kAutoSwitchPositionStep3", 10200);	// 2.5 revs
+		kAutoSwitchDriveAngle    = prefs->GetDouble("kAutoSwitchDriveAngle", 45.0);
+		kAutoSpeed               = prefs->GetDouble("kAutoSpeed", 0.6);
+
+		kTurnP                = prefs->GetDouble("kTurnP", 0.2);
+		kTurnI                = prefs->GetDouble("kTurnI", 0.0);
+		kTurnD                = prefs->GetDouble("kTurnD", 0.2);
+		kTurnF                = prefs->GetDouble("kTurnF", 0.0);
+		kTurnOutputRange      = prefs->GetDouble("kTurnOutputRange", 0.2);
+		kTurnToleranceDegrees = prefs->GetDouble("kTurnToleranceDegrees", 0.1);
 
 		claw->Config_kF(0, kClawF, 0);
 		claw->Config_kP(0, kClawP, 0);
 		claw->Config_kI(0, kClawI, 0);
 		claw->Config_kD(0, kClawD, 0);
+
+		lElevator->ConfigForwardSoftLimitEnable(true, 0);
+		lElevator->ConfigReverseSoftLimitEnable(true, 0);
+		lElevator->ConfigForwardSoftLimitThreshold(kElevatorHighLimit, 0);
+		lElevator->ConfigReverseSoftLimitThreshold(0, 0);
+		rElevator->ConfigForwardSoftLimitEnable(true, 0);
+		rElevator->ConfigReverseSoftLimitEnable(true, 0);
+		rElevator->ConfigForwardSoftLimitThreshold(kElevatorHighLimit, 0);
+		rElevator->ConfigReverseSoftLimitThreshold(0, 0);
 	}
 
 	void disableElevatorPID() {
@@ -289,10 +322,6 @@ public:
 
 		lElevator = new WPI_TalonSRX(6);
 		lElevator->ConfigSelectedFeedbackSensor(FeedbackDevice::CTRE_MagEncoder_Absolute, 0, 0);
-		lElevator->ConfigForwardSoftLimitThreshold(-17750, 10);
-		//lElevator->ConfigReverseSoftLimitThreshold(5*4096, 10);
-		//lElevator->ConfigForwardSoftLimitEnable(true, 10);
-		//lElevator->ConfigReverseSoftLimitEnable(true, 10);
 		//lElevator->ConfigPeakOutputForward(0.25, 0);
 		//lElevator->ConfigPeakOutputReverse(-0.25, 0);
 		lElevator->SelectProfileSlot(0, 0);
@@ -301,19 +330,16 @@ public:
 
 		rElevator = new WPI_TalonSRX(5);
 		rElevator->ConfigSelectedFeedbackSensor(FeedbackDevice::CTRE_MagEncoder_Absolute, 0, 0);
-		//rElevator->ConfigForwardSoftLimitThreshold(17750, 10);
-		//rElevator->ConfigReverseSoftLimitThreshold(5*4096, 10);
-		//rElevator->ConfigForwardSoftLimitEnable(true, 10);
-		//rElevator->ConfigReverseSoftLimitEnable(true, 10);
 		//rElevator->ConfigPeakOutputForward(0.75, 10);
 		//rElevator->ConfigPeakOutputReverse(-0.75, 10);
 		rElevator->SelectProfileSlot(0, 0);
 		rElevator->ConfigAllowableClosedloopError(0, 0, 0);
+
 		// Zero position
 		rElevator->SetSelectedSensorPosition(0, 0, 0);
 		lElevator->SetSelectedSensorPosition(0, 0, 0);
 
-		claw  = new WPI_TalonSRX(8);
+		claw = new WPI_TalonSRX(8);
 		claw ->ConfigSelectedFeedbackSensor(FeedbackDevice::CTRE_MagEncoder_Absolute, 0, 0);
 		claw->SelectProfileSlot(0, 0);
 		claw->ConfigAllowableClosedloopError(0, 0, 0);
@@ -336,6 +362,12 @@ public:
 	void AutonomousInit() override {
 		getPreferences();
 
+		turnController = new PIDController(kTurnP, kTurnI, kTurnD, kTurnF, ahrs, &turnPIDOutput);
+		turnController->SetInputRange(-180.0, 180.0);
+		turnController->SetOutputRange(-kTurnOutputRange, kTurnOutputRange);
+		turnController->SetAbsoluteTolerance(kTurnToleranceDegrees);
+		turnController->SetContinuous(true);
+
 		// reset drive position
 		rFrontMotor->SetSelectedSensorPosition(0, 0, 0);
 		lFrontMotor->SetSelectedSensorPosition(0, 0, 0);
@@ -349,7 +381,7 @@ public:
 		// Read Game Data from FMS
 		std::string gameData;
 		gameData = frc::DriverStation::GetInstance().GetGameSpecificMessage();
-		if (gameData.length > 0) {
+		if (gameData.length() > 0) {
 			if (gameData[0] == 'L') {
 				switchPosition = 'L';
 			} else {
@@ -369,32 +401,35 @@ public:
 		// Determine which Autonomous Mode to run
 		if (autoStartPosition.find("R") != std::string::npos) {
 			if (scalePosition == 'R') {
-				autoStates = autoScaleStates;
+				// flip angle
+				kAutoScaleDriveAngle = -kAutoScaleDriveAngle;
+				autoStates = createAutoScaleStates();
 				LOGGER(INFO) << "[AutoInit] AUTO SCALE MODE, RIGHT";
 			} else {
-				autoStates = autoLineStates;
+				autoStates = createAutoLineStates();
 				LOGGER(INFO) << "[AutoInit] AUTO LINE MODE, RIGHT";
 			}
 		} else if (autoStartPosition.find("L") != std::string::npos){
 			if (scalePosition == 'L') {
-				autoStates = autoScaleStates;
+				autoStates = createAutoScaleStates();
 				LOGGER(INFO) << "[AutoInit] AUTO SCALE MODE, LEFT";
 			} else {
-				autoStates = autoLineStates;
+				autoStates = createAutoLineStates();
 				LOGGER(INFO) << "[AutoInit] AUTO LINE MODE, LEFT";
 			}
 		} else {
-			autoStates = autoSwitchStates;
 			if (switchPosition == 'L') {
+				// flip angle
+				kAutoSwitchDriveAngle = -kAutoSwitchDriveAngle;
 				LOGGER(INFO) << "[AutoInit] AUTO SWITCH MODE, LEFT";
 			} else {
 				LOGGER(INFO) << "[AutoInit] AUTO SWITCH MODE, RIGHT";
 			}
+			autoStates = createAutoSwitchStates();
 		}
 	}
 
 	void AutonomousPeriodic() {
-		autoStateStatus status;
 		++autoTimer;
 
 		if (autoStates.empty()) {
@@ -402,15 +437,8 @@ public:
 			return;
 		}
 
-		// Call current auto function, if timeout not exceeded
-		if (autoTimer < autoStates.front().timeout()) {
-			status = autoStates.front().call(*this);
-		} else {
-			// Timeout!
-			autoStates.clear();
-			autoStop();
-			return;
-		}
+		// Call current auto function
+		autoStateStatus status = autoStates.front().call(*this, autoTimer);
 
 		// Check status
 		switch (status) {
@@ -425,7 +453,6 @@ public:
 			case autoFail:
 				// Something went wrong, stop
 				autoStates.clear();
-				autoStop();
 				break;
 		}
 	}
@@ -547,8 +574,8 @@ public:
 			// Engage ratchet
 			ratchetSolenoid->Set(frc::Relay::kOff);
 
-			lElevator->Set(ControlMode::Position, 0);
-			rElevator->Set(ControlMode::Position, 0);
+			lElevator->Set(ControlMode::Position, 1000);
+			rElevator->Set(ControlMode::Position, 1000);
 			LOGGER(INFO) << "ACTION: CLIMBING";
 		}
 	}
@@ -586,10 +613,11 @@ public:
 			 prefs->PutInt("kAutoLinePosition", 1000);
 			 prefs->PutInt("kAutoScalePositionStep1", 1000);
 			 prefs->PutInt("kAutoScalePositionStep2", 1000);
+			 prefs->PutDouble("kAutoScaleDriveAngle", 0.0);
 			 prefs->PutInt("kAutoSwitchPositionStep1", 1000);
 			 prefs->PutInt("kAutoSwitchPositionStep2", 1000);
 			 prefs->PutInt("kAutoSwitchPositionStep3", 1000);
-			 prefs->PutDouble("kAutoSwitchAngle", 0.0);
+			 prefs->PutDouble("kAutoSwitchDriveAngle", 0.0);
 			 prefs->PutDouble("kAutoSpeed", 0.0);
 		}
 	}
