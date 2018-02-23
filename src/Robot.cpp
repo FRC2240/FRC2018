@@ -9,6 +9,8 @@
 #include <Relay.h>
 #include "AHRS.h"
 #include <SmartDashboard/SmartDashboard.h>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/core/core.hpp>
 
 //4096:1 revolution for encoder
 // 1st preference: raising (R) lowering (L) for triggers
@@ -56,7 +58,7 @@ private:
 	// Class to wrap an autonomous function and it's parameters to make it serialize-able
 	class autoFunction {
 	public:
-		autoFunction(autoStateStatus (Robot::*func)(double, int, int, int), double angle, int distance, int height, int timeout, int timer) :
+		autoFunction(autoStateStatus (Robot::*func)(double, int, int, int, int), double angle, int distance, int height, int timeout) :
 			m_func(func), m_angle(angle), m_distance(distance), m_height(height), m_timeout(timeout) {}
 
 		autoStateStatus call(Robot& obj, int timer) { return ((obj).*(m_func))(m_angle, m_distance, m_height, m_timeout, timer); }
@@ -156,8 +158,10 @@ private:
 		drive->ArcadeDrive(0.0, -turnPIDOutput.correction);
 
 		if ((ahrs->GetAngle() - angle) < kTurnToleranceDegrees) {
+			turnController->Disable();
 			return autoSuccess;
 		} else if (timer > timeout) {
+			turnController->Disable();
 			return autoFail;
 		} else {
 			return autoInProgress;
@@ -297,7 +301,22 @@ private:
 		rElevator->Config_kD(0, kElevatorD, 0);
 	}
 
-public:
+	static void VisionThread()
+	{
+		cs::UsbCamera camera = CameraServer::GetInstance()->StartAutomaticCapture();
+		camera.SetResolution(640, 480);
+		cs::CvSink cvSink = CameraServer::GetInstance()->GetVideo();
+		cs::CvSource outputStreamStd = CameraServer::GetInstance()->PutVideo("Gray", 640, 480);
+		cv::Mat source;
+		cv::Mat output;
+		while(true) {
+			cvSink.GrabFrame(source);
+			cvtColor(source, output, cv::COLOR_BGR2GRAY);
+			outputStreamStd.PutFrame(output);
+		}
+	}
+
+	public:
 
 	void RobotInit() {
 		prefs = Preferences::GetInstance();
@@ -357,6 +376,9 @@ public:
 			err_string += ex.what();
 			DriverStation::ReportError(err_string.c_str());
 		}
+
+        std::thread visionThread(VisionThread);
+        visionThread.detach();
 	}
 
 	void AutonomousInit() override {
@@ -619,6 +641,13 @@ public:
 			 prefs->PutInt("kAutoSwitchPositionStep3", 1000);
 			 prefs->PutDouble("kAutoSwitchDriveAngle", 0.0);
 			 prefs->PutDouble("kAutoSpeed", 0.0);
+
+			 prefs->PutDouble("kTurnP", 0.2);
+			 prefs->PutDouble("kTurnI", 0.0);
+			 prefs->PutDouble("kTurnD", 0.2);
+			 prefs->PutDouble("kTurnF", 0.0);
+			 prefs->PutDouble("kTurnOutputRange", 0.2);
+			 prefs->PutDouble("kTurnToleranceDegrees", 0.1);
 		}
 	}
 };
