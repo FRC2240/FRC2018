@@ -138,12 +138,15 @@ private:
 
 	// Autonomous functions
 	autoStateStatus autoDriveOnBearing(double angle, int distance, int height, int timeout, int timer) {
-		lFrontMotor->Set(ControlMode::Position, distance);
-		rFrontMotor->Set(ControlMode::Position, distance);
+		//lFrontMotor->Set(ControlMode::Position, distance);
+		//rFrontMotor->Set(ControlMode::Position, distance);
+		turnController->SetSetpoint(angle);
+		turnController->Enable();
+		drive->ArcadeDrive(kAutoSpeed, -turnPIDOutput.correction);
 
 		double avg = (lFrontMotor->GetSelectedSensorPosition(0) + rFrontMotor->GetSelectedSensorPosition(0))/2.0;
-		double diff = fabs(double(distance) - avg);
-		if (diff < 1000.0) {
+		if (avg > distance) {
+			drive->ArcadeDrive(0.0, 0.0);
 			return autoSuccess;
 		} else if (timer > timeout) {
 			return autoFail;
@@ -159,6 +162,7 @@ private:
 
 		if ((ahrs->GetAngle() - angle) < kTurnToleranceDegrees) {
 			turnController->Disable();
+			drive->ArcadeDrive(0.0, 0.0);
 			return autoSuccess;
 		} else if (timer > timeout) {
 			turnController->Disable();
@@ -169,12 +173,23 @@ private:
 	}
 
 	autoStateStatus autoRaiseCube(double angle, int distance, int height, int timeout, int timer) {
-		// TODO
+		lElevator->Set(ControlMode::Position, height);
+		rElevator->Set(ControlMode::Position, height);
+
+		int diff = height - (lElevator->GetSelectedSensorPosition(0) + rElevator->GetSelectedSensorPosition(0))/2;
+		if (abs(diff) < 1000) {
+			return autoSuccess;
+		} else if (time > timeout) {
+			return autoFail;
+		} else {
+			return autoInProgress;
+		}
 		return autoSuccess;
 	}
 
 	autoStateStatus autoReleaseCube(double angle, int distance, int height, int timeout, int timer) {
 		// TODO
+		// drop and open claw
 		return autoSuccess;
 	}
 
@@ -301,12 +316,12 @@ private:
 		rElevator->Config_kD(0, kElevatorD, 0);
 	}
 
-	static void VisionThread()
-	{
+	static void VisionThread() {
 		cs::UsbCamera camera = CameraServer::GetInstance()->StartAutomaticCapture();
 		camera.SetResolution(640, 480);
 		cs::CvSink cvSink = CameraServer::GetInstance()->GetVideo();
-		cs::CvSource outputStreamStd = CameraServer::GetInstance()->PutVideo("Gray", 640, 480);
+		cs::CvSource outputStreamStd = CameraServer::GetInstance()->PutVideo("CLU-"
+				"CAM", 640, 480);
 		cv::Mat source;
 		cv::Mat output;
 		while(true) {
@@ -648,6 +663,7 @@ private:
 			 prefs->PutDouble("kTurnF", 0.0);
 			 prefs->PutDouble("kTurnOutputRange", 0.2);
 			 prefs->PutDouble("kTurnToleranceDegrees", 0.1);
+			 LOGGER(INFO) << "Wrote Preferences file";
 		}
 	}
 };
