@@ -20,7 +20,7 @@
 
 class Robot : public frc::IterativeRobot {
 private:
-	double speedVariable = -0.75;
+	double speedVariable = -1.0;
 	Joystick *stick;
 
 	WPI_TalonSRX *lFrontMotor;
@@ -31,8 +31,9 @@ private:
 	WPI_TalonSRX *rElevator;
 	WPI_TalonSRX *lElevator;
 
-	WPI_TalonSRX *claw;
-	VictorSP     *clawLifter;
+	//WPI_TalonSRX *claw;
+	VictorSP     *gatherer;
+	VictorSP     *gathererLifter;
 
 	Servo *climbBarDeployer;
 	DifferentialDrive *drive;
@@ -212,7 +213,16 @@ private:
 		lElevator->Set(ControlMode::PercentOutput, 0.7);
 		rElevator->Set(ControlMode::PercentOutput, 0.7);
 
-		int avg = (lElevator->GetSelectedSensorPosition(0) + rElevator->GetSelectedSensorPosition(0))/2;
+		int avg; //= (lElevator->GetSelectedSensorPosition(0) + rElevator->GetSelectedSensorPosition(0))/2;
+
+		if(lElevator->GetSelectedSensorPosition(0) == 0){
+			avg = rElevator->GetSelectedSensorPosition(0);
+		}else if(rElevator->GetSelectedSensorPosition(0) == 0){
+			avg = lElevator->GetSelectedSensorPosition(0);
+		}else{
+			avg = (lElevator->GetSelectedSensorPosition(0) + rElevator->GetSelectedSensorPosition(0))/2;
+		}
+
 		if (avg > height) {
 			lElevator->Set(ControlMode::PercentOutput, 0.0);
 			rElevator->Set(ControlMode::PercentOutput, 0.0);
@@ -227,15 +237,46 @@ private:
 		return autoSuccess;
 	}
 
+	autoStateStatus autoLower(double angle, int distance, int height, int  timeout, int timer)
+	{
+		if(timer < timeout) {
+			gathererLifter->Set(-1.0);
+			return autoInProgress;
+		} else {
+			gathererLifter->Set(0.0);
+			return autoSuccess;
+		}
+	}
+
 	autoStateStatus autoReleaseCube(double angle, int distance, int height, int timeout, int timer) {
+
+		if (timer < timeout) {
+			gatherer->Set(-1.0);
+			return autoInProgress;
+		} else {
+			gatherer->Set(0.0);
+			return autoSuccess;
+		}
+
+
+		/*if(timer < 25)
+		{
+			clawLifter->Set(-0.75);
+			return autoInProgress;
+		}else{
+			clawLifter->Set(0.0);
+			return autoSuccess;
+		}*/
 		// TODO
+
+
 		// drop and open claw
 
-		enableElevatorPID();
-		lElevator->Set(ControlMode::Position, lElevator->GetSelectedSensorPosition(0));
-		rElevator->Set(ControlMode::Position, rElevator->GetSelectedSensorPosition(0));
+		//enableElevatorPID();
+		//lElevator->Set(ControlMode::Position, lElevator->GetSelectedSensorPosition(0));
+		//rElevator->Set(ControlMode::Position, rElevator->GetSelectedSensorPosition(0));
 
-		int targetPos = claw->GetSelectedSensorPosition(0) + 400;
+		//int targetPos = claw->GetSelectedSensorPosition(0) + 400;
 
 		//if (timer < 2)
 		//{
@@ -243,11 +284,11 @@ private:
 		//}
 
 
-		LOGGER(INFO) << "Current Claw Pos: " << claw->GetSelectedSensorPosition(0);
-		LOGGER(INFO) << "Target Position: " << targetPos;
+		//LOGGER(INFO) << "Current Claw Pos: " << claw->GetSelectedSensorPosition(0);
+		//LOGGER(INFO) << "Target Position: " << targetPos;
 
 		//claw->Set(ControlMode::PercentOutput, 0.3);
-		claw->Set(ControlMode::Position, targetPos);
+		//claw->Set(ControlMode::Position, targetPos);
 
 		/*if(claw->GetSelectedSensorPosition(0) > targetPos){
 			int currentPos = claw->GetSelectedSensorPosition(0);
@@ -265,7 +306,8 @@ private:
 
 	// Drive to Auto Line
 	std::list<autoFunction> createAutoLineStates () {
-		return {autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoLinePosition, 0, 400)};
+		return {autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoLinePosition, 0, 400)
+		};
 		LOGGER(INFO) << "createAutoLineStates successful";
 	}
 
@@ -277,9 +319,13 @@ private:
 		autoFunction(&Robot::autoTurn, kAutoSwitchDriveAngle, 0, 0, 200),
 		autoFunction(&Robot::autoDriveOnBearing, kAutoSwitchDriveAngle, kAutoSwitchPositionStep2, 0, 200),
 		autoFunction(&Robot::autoTurn, 0.0, 0, 0, 200),
-		autoFunction(&Robot::autoRaiseCube, 0.0, 0, kElevatorSwitchPosition, 200),
+		//autoFunction(&Robot::autoRaiseCube, 0.0, 0, kElevatorSwitchPosition, 200),
+		autoFunction(&Robot::autoRaiseCube, 0.0, 0, 7500, 200),
 		autoFunction(&Robot::autoDriveOnBearing, 0.0, kAutoSwitchPositionStep3, 0, 200),
-		autoFunction(&Robot::autoReleaseCube, 0.0, 0, kElevatorSwitchPosition, 200)
+		autoFunction(&Robot::autoLower, 0.0, 0, 0, 25),
+		autoFunction(&Robot::autoReleaseCube, 0.0, 0, kElevatorSwitchPosition, 25),
+		//autoFunction(&Robot::autoDriveOnBearing, 0.0, -2000, 0, 200),
+		//autoFunction(&Robot::autoRaiseCube, 0.0, 0, 0, 200),
 		};
 	}
 
@@ -308,18 +354,18 @@ private:
 	// Read data from the Preferences Panel
 	void getPreferences()
 	{
-		kServoStart = prefs->GetDouble("kServoStart", 0.5);
+		kServoStart = prefs->GetDouble("kServoStart", 0.6);
 		kServoStop  = prefs->GetDouble("kServoStop", 0.3);
 
-		kElevatorP = prefs->GetDouble("kElevatorP", 4.0);
+		kElevatorP = prefs->GetDouble("kElevatorP", 0.5);
 		kElevatorI = prefs->GetDouble("kElevatorI", 0.0);
-		kElevatorD = prefs->GetDouble("kElevatorD", 1.0);
+		kElevatorD = prefs->GetDouble("kElevatorD", 0.0);
 		kElevatorF = prefs->GetDouble("kElevatorF", 0.0);
 
-		kElevatorHighLimit         = prefs->GetInt("kElevatorHighLimit", 35000);
+		kElevatorHighLimit         = prefs->GetInt("kElevatorHighLimit", 25500);
 		kElevatorSwitchPosition    = prefs->GetInt("kElevatorSwitchPosition", 16000);
 		kElevatorScaleLowPosition  = prefs->GetInt("kElevatorScaleLowPosition", 20000);
-		kElevatorScaleHighPosition = prefs->GetInt("kElevatorScaleHighPosition", 27000);
+		kElevatorScaleHighPosition = prefs->GetInt("kElevatorScaleHighPosition", 31000);
 		kElevatorClimbStopPosition = prefs->GetInt("kElevatorClimbPosition", 8000);
 		kElevatorDistancePerTick   = prefs->GetInt("kElevatorDistancePerTick", 600);
 
@@ -333,7 +379,7 @@ private:
 		kClawD = prefs->GetDouble("kClawD", 0.0);
 		kClawF = prefs->GetDouble("kClawF", 0.0);
 		kClawClosedPosition = prefs->GetInt("kClawClosedPosition", -500);
-		kClawOpenPosition   = prefs->GetInt("kClawOpenPosition", 1500);
+		kClawOpenPosition   = prefs->GetInt("kClawOpenPosition", 1890);
 
 		kAutoLinePosition        = prefs->GetInt("kAutoLinePosition", 25000);			// 9 revs
 		kAutoScalePositionStep1  = prefs->GetInt("kAutoScalePositionStep1", 70000);		// 17 revs
@@ -343,19 +389,19 @@ private:
 		kAutoSwitchPositionStep2 = prefs->GetInt("kAutoSwitchPositionStep2", 14400);	// 4.5 rvs
 		kAutoSwitchPositionStep3 = prefs->GetInt("kAutoSwitchPositionStep3", 2000);	// 2.5 revs
 		kAutoSwitchDriveAngle    = prefs->GetDouble("kAutoSwitchDriveAngle", 45.0);
-		kAutoSpeed               = prefs->GetDouble("kAutoSpeed", 0.5);
+		kAutoSpeed               = prefs->GetDouble("kAutoSpeed", 0.6); // originally .5 3/8/2018
 
-		kTurnP                = prefs->GetDouble("kTurnP", 0.15);
+		kTurnP                = prefs->GetDouble("kTurnP", 0.05);
 		kTurnI                = prefs->GetDouble("kTurnI", 0.0);
-		kTurnD                = prefs->GetDouble("kTurnD", 0.2);
+		kTurnD                = prefs->GetDouble("kTurnD", 0.06);
 		kTurnF                = prefs->GetDouble("kTurnF", 0.0);
 		kTurnOutputRange      = prefs->GetDouble("kTurnOutputRange", 0.6);
 		kTurnToleranceDegrees = prefs->GetDouble("kTurnToleranceDegrees", 2.0);
 
-		claw->Config_kF(0, kClawF, 0);
-		claw->Config_kP(0, kClawP, 0);
-		claw->Config_kI(0, kClawI, 0);
-		claw->Config_kD(0, kClawD, 0);
+		//claw->Config_kF(0, kClawF, 0);
+		//claw->Config_kP(0, kClawP, 0);
+		//claw->Config_kI(0, kClawI, 0);
+		//claw->Config_kD(0, kClawD, 0);
 
 		lElevator->ConfigForwardSoftLimitEnable(true, 0);
 		lElevator->ConfigReverseSoftLimitEnable(true, 0);
@@ -366,8 +412,8 @@ private:
 		rElevator->ConfigForwardSoftLimitThreshold(kElevatorHighLimit, 0);
 		rElevator->ConfigReverseSoftLimitThreshold(0, 0);
 
-		claw->ConfigForwardSoftLimitThreshold(1800, 0);
-		claw->ConfigForwardSoftLimitEnable(true, 0);
+		//claw->ConfigForwardSoftLimitThreshold(1800, 0);
+		//claw->ConfigForwardSoftLimitEnable(true, 0);
 	}
 
 	void disableElevatorPID() {
@@ -447,14 +493,15 @@ private:
 		rElevator->SetSelectedSensorPosition(0, 0, 0);
 		lElevator->SetSelectedSensorPosition(0, 0, 0);
 
-		claw = new WPI_TalonSRX(8);
-		claw ->ConfigSelectedFeedbackSensor(FeedbackDevice::CTRE_MagEncoder_Absolute, 0, 0);
-		claw->SelectProfileSlot(0, 0);
-		claw->ConfigAllowableClosedloopError(0, 0, 0);
-		claw->SetSelectedSensorPosition(0, 0, 0);
-		claw->SetSensorPhase(false);
+		//claw = new WPI_TalonSRX(8);
+		//claw ->ConfigSelectedFeedbackSensor(FeedbackDevice::CTRE_MagEncoder_Absolute, 0, 0);
+		//claw->SelectProfileSlot(0, 0);
+		//claw->ConfigAllowableClosedloopError(0, 0, 0);
+		//claw->SetSelectedSensorPosition(0, 0, 0);
+		//claw->SetSensorPhase(false);
 
-		clawLifter = new VictorSP(9);
+		gatherer = new VictorSP(8);
+		gathererLifter = new VictorSP(9);
 
 		ratchetSolenoid = new frc::Relay(0,frc::Relay::kForwardOnly);
 		ratchetSolenoid->Set(frc::Relay::kOn);
@@ -564,6 +611,7 @@ private:
 
 		// Check status
 		switch (status) {
+
 			case autoInProgress:
 				LOGGER(INFO) << "autoInProgress";
 				// Keep going!
@@ -590,44 +638,46 @@ private:
 		ratchetSolenoid->Set(frc::Relay::kOn);
 		//ratchetSolenoid->Set(frc::Relay::kForward);
 		//ratchetSolenoid->Set(frc::Relay::kOff);
+		rFrontMotor->SetSelectedSensorPosition(0, 0, 0);
+		lFrontMotor->SetSelectedSensorPosition(0, 0, 0);
 	}
 
 	void TeleopPeriodic() {
-		LOGGER(INFO) << "Relay State:" << ratchetSolenoid->Get();
-        // Joystick inputs
+		LOGGER(INFO) << "R/L Drive Encoders: " << rFrontMotor->GetSelectedSensorPosition(0) << " -- " << lFrontMotor->GetSelectedSensorPosition(0);
+
+		// Joystick inputs
 		double driveForwardAction  = stick->GetRawAxis(1);
 		double driveTurnAction     = stick->GetRawAxis(4);
 		double elevatorDownAction  = stick->GetRawAxis(2);
 		double elevatorUpAction    = stick->GetRawAxis(3);
-		//bool   climbAction         = stick->GetRawButton(2);
-		bool   clawUpAction        = stick->GetRawButton(4);
-		bool   clawDownAction      = stick->GetRawButton(1);
-		bool   clawOpenAction      = stick->GetRawButton(5);
-		bool   clawCloseAction     = stick->GetRawButton(6);
+		bool   gathererUpAction        = stick->GetRawButton(4);
+		bool   gathererDownAction      = stick->GetRawButton(1);
+		bool   gathererRunIn      = stick->GetRawButton(5);
+		bool   gathererRunOut     = stick->GetRawButton(6);
 
 		bool   ratchetAction       = stick->GetRawButton(7);
 		bool   servoAction         = stick->GetRawButton(8);
-		//int    elevatorLevelAction = stick->GetPOV();
+
+		bool slowAction 		   = stick->GetRawButton(9);
+
+		if(slowAction)
+		{
+			speedVariable = -0.8;
+		}else{
+			speedVariable = -1.0;
+		}
 
 		elevatorDownAction = deadBand(elevatorDownAction);
 		elevatorUpAction = deadBand(elevatorUpAction);
 
 		// robot drive
-		drive->ArcadeDrive(speedVariable * driveForwardAction, -1 * speedVariable * driveTurnAction);
+		drive->ArcadeDrive(speedVariable * driveForwardAction, -0.7 * speedVariable * driveTurnAction);
 
 		// Continuous elevator
 		if (elevatorUpAction && !elevatorDownAction) {
-			//int rpos = kElevatorDistancePerTick + rElevator->GetSelectedSensorPosition(0);
-			//int lpos = kElevatorDistancePerTick + lElevator->GetSelectedSensorPosition(0);
-			//lElevator->Set(ControlMode::Position, lpos);
-			//rElevator->Set(ControlMode::Position, rpos);
 			lElevator->Set(ControlMode::PercentOutput, elevatorUpAction);
 			rElevator->Set(ControlMode::PercentOutput, elevatorUpAction);
 		} else if (elevatorDownAction && !elevatorUpAction) {
-			//int rpos = -kElevatorDistancePerTick + rElevator->GetSelectedSensorPosition(0);
-			//int lpos = -kElevatorDistancePerTick + lElevator->GetSelectedSensorPosition(0);
-			//lElevator->Set(ControlMode::Position, lpos);
-			//rElevator->Set(ControlMode::Position, rpos);
 			lElevator->Set(ControlMode::PercentOutput, -elevatorDownAction);
 			rElevator->Set(ControlMode::PercentOutput, -elevatorDownAction);
 		} else {
@@ -664,35 +714,36 @@ private:
 		}*/
 
 		LOGGER(INFO) << "Elevator Position (R/L): " << rElevator->GetSelectedSensorPosition(0) << " "
-				     << lElevator->GetSelectedSensorPosition(0)
-					 << " Claw Position: " << claw->GetSelectedSensorPosition(0);
+				     << lElevator->GetSelectedSensorPosition(0);
 
 		// Claw Up/Down
-		if (clawDownAction && !clawUpAction) {
-			clawLifter->Set(-0.25);
+		if (gathererDownAction && !gathererUpAction) {
+			gathererLifter->Set(-0.5);
 			LOGGER(INFO) << "ACTION: CLAW DOWN";
-		} else if (clawUpAction && !clawDownAction) {
-			clawLifter->Set(1.0);
+		} else if (gathererUpAction && !gathererDownAction) {
+			gathererLifter->Set(0.5);
 			LOGGER(INFO) << "ACTION: CLAW UP";
 		} else {
-			clawLifter->Set(0.0);
+			gathererLifter->Set(0.0);
 		}
 
 		// Claw Open/Close
-		if (clawOpenAction && !clawCloseAction) {
+		if (gathererRunOut && !gathererRunIn) {
 			//claw->Set(ControlMode::Position, kClawOpenPosition);
-			claw->Set(ControlMode::PercentOutput, 0.6);
-			clawPosition = claw->GetSelectedSensorPosition(0);
-			LOGGER(INFO) << "ACTION: CLAW OPEN";
-		}
-		if (clawCloseAction && !clawOpenAction) {
+			//claw->Set(ControlMode::PercentOutput, 0.6);
+			//clawPosition = kClawOpenPosition;
+			gatherer->Set(1.0);
+
+			LOGGER(INFO) << "ACTION: GATHERER RUN IN";
+		}else if (gathererRunIn && !gathererRunOut) {
 			//claw->Set(ControlMode::Position, kClawClosedPosition);
-			claw->Set(ControlMode::PercentOutput, -1.0);
-			clawPosition = claw->GetSelectedSensorPosition(0);
-			LOGGER(INFO) << "ACTION: CLAW CLOSE";
+			//claw->Set(ControlMode::PercentOutput, -0.25);
+			//clawPosition = claw->GetSelectedSensorPosition(0);
+			gatherer->Set(-1.0);
+			LOGGER(INFO) << "ACTION: GATHERER RUN OUT";
 		} else {
-			claw->Set(ControlMode::PercentOutput, 0.0);
-			claw->Set(ControlMode::Position, clawPosition);
+			gatherer->Set(0.0);
+			//claw->Set(ControlMode::Position, clawPosition);
 		}
 
 		// Toggles the solenoid ratchet
@@ -714,7 +765,10 @@ private:
 		    }
 		}
 		lastRatchetAction = ratchetAction;
-
+		if(ratchetSolenoid->Get() == frc::Relay::kOff)
+		{
+			LOGGER(INFO) << "RACTCHET CURRENTLY ENGAGED";
+		}
 		// Deploy Climb Bar
 		if (servoAction) {
 			climbBarDeployer->Set(kServoStop);
@@ -723,18 +777,6 @@ private:
 			LOGGER(INFO) << "servo: " << kServoStart;
 			climbBarDeployer->Set(kServoStart);
 		}
-
-		// Climb
-		/*if (climbAction) {
-			// Disable the ElevatorPID so that we don't accidentally hang using the motors
-			disableElevatorPID();
-			// Engage ratchet
-			ratchetSolenoid->Set(frc::Relay::kReverse);
-
-			lElevator->Set(ControlMode::Position, 1000);
-			rElevator->Set(ControlMode::Position, 1000);
-			LOGGER(INFO) << "ACTION: CLIMBING";
-		}*/
 	}
 
 	void TestPeriodic() {
@@ -748,7 +790,7 @@ private:
 			 prefs->PutDouble("kElevatorI", 0.0);
 			 prefs->PutDouble("kElevatorD", 0.0);
 			 prefs->PutDouble("kElevatorF", 0.0);
-			 prefs->PutInt("kElevatorHighLimit", 30000);
+			 prefs->PutInt("kElevatorHighLimit", 27000);
 			 prefs->PutInt("kElevatorSwitchPosition", 8000);
 			 prefs->PutInt("kElevatorScaleLowPosition", 20000);
 			 prefs->PutInt("kElevatorScaleHighPosition", 27000);
@@ -765,7 +807,7 @@ private:
 			 prefs->PutDouble("kClawD", 0.0);
 			 prefs->PutDouble("kClawF", 0.0);
 			 prefs->PutInt("kClawClosedPosition", 0);
-			 prefs->PutInt("kClawOpenPosition", 1000);
+			 prefs->PutInt("kClawOpenPosition", 1890);
 
 			 prefs->PutInt("kAutoLinePosition", 1000);
 			 prefs->PutInt("kAutoScalePositionStep1", 1000);
